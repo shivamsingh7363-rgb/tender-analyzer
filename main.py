@@ -3,10 +3,8 @@ import base64
 import json
 import httpx
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
 
 app = FastAPI(title="Tender Analyzer API")
 
@@ -17,8 +15,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
@@ -26,7 +22,7 @@ SYSTEM_PROMPT = """You are an expert tender analysis AI for a consulting firm. Y
 
 For each checklist item, determine:
 - MET: The tender clearly satisfies this requirement with specific details provided
-- PARTIAL: Some information is present but incomplete or ambiguous  
+- PARTIAL: Some information is present but incomplete or ambiguous
 - NOT MET: The requirement is not addressed or clearly cannot be fulfilled
 
 Respond ONLY with valid JSON. No markdown, no preamble, no explanation outside the JSON.
@@ -48,10 +44,206 @@ JSON structure:
   ]
 }"""
 
+HTML_PAGE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tender Analyzer — AI Checklist Tool</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #F7F5F0; --surface: #FFFFFF; --surface2: #F0EDE6;
+    --border: rgba(0,0,0,0.10); --border-md: rgba(0,0,0,0.18);
+    --text: #1A1814; --text2: #6B6760; --text3: #9E9B96;
+    --accent: #1A5C3A; --accent-light: #E8F4ED;
+    --amber: #92600A; --amber-light: #FEF3DC;
+    --red: #8B2020; --red-light: #FDEAEA;
+    --radius: 10px; --radius-lg: 16px;
+  }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 15px; line-height: 1.6; }
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 2rem; display: flex; align-items: center; justify-content: space-between; height: 60px; position: sticky; top: 0; z-index: 100; }
+  .logo { font-family: 'DM Serif Display', serif; font-size: 20px; color: var(--text); letter-spacing: -0.02em; }
+  .logo span { color: var(--accent); }
+  .header-tag { font-size: 12px; background: var(--accent-light); color: var(--accent); padding: 3px 10px; border-radius: 20px; font-weight: 500; }
+  main { max-width: 960px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+  .page-title { font-family: 'DM Serif Display', serif; font-size: 34px; letter-spacing: -0.03em; margin-bottom: 6px; }
+  .page-sub { color: var(--text2); font-size: 15px; margin-bottom: 2.5rem; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem; }
+  @media (max-width: 680px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1.5rem; }
+  .card-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text3); margin-bottom: 1rem; }
+  .upload-zone { border: 2px dashed var(--border-md); border-radius: var(--radius); padding: 2.5rem 1rem; text-align: center; cursor: pointer; transition: all 0.2s; }
+  .upload-zone:hover { border-color: var(--accent); background: var(--accent-light); }
+  .upload-zone.has-file { border-color: var(--accent); border-style: solid; background: var(--accent-light); }
+  .upload-icon { font-size: 32px; display: block; margin-bottom: 10px; }
+  .upload-text { font-size: 14px; color: var(--text2); }
+  .upload-text strong { color: var(--accent); font-weight: 500; cursor: pointer; }
+  .file-name { font-size: 13px; font-weight: 500; color: var(--accent); margin-top: 8px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .chip { font-size: 12px; padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border-md); background: transparent; color: var(--text2); cursor: pointer; font-family: 'DM Sans', sans-serif; transition: all 0.15s; }
+  .chip:hover { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+  .checklist-list { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; }
+  .cl-item { display: flex; align-items: center; gap: 8px; }
+  .cl-item input { flex: 1; font-size: 14px; font-family: 'DM Sans', sans-serif; padding: 8px 12px; border: 1px solid var(--border-md); border-radius: var(--radius); background: var(--surface); color: var(--text); outline: none; transition: border 0.15s; }
+  .cl-item input:focus { border-color: var(--accent); }
+  .del-btn { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border); background: transparent; color: var(--text3); cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.15s; line-height: 1; }
+  .del-btn:hover { background: var(--red-light); color: var(--red); border-color: var(--red); }
+  .add-link { background: none; border: none; color: var(--accent); font-size: 13px; font-family: 'DM Sans', sans-serif; cursor: pointer; margin-top: 10px; padding: 0; }
+  .add-link:hover { text-decoration: underline; }
+  .analyze-btn { width: 100%; padding: 14px; font-size: 15px; font-weight: 600; font-family: 'DM Serif Display', serif; letter-spacing: 0.01em; border-radius: var(--radius); border: none; cursor: pointer; background: var(--accent); color: white; transition: opacity 0.15s, transform 0.1s; margin-bottom: 2rem; }
+  .analyze-btn:hover { opacity: 0.9; }
+  .analyze-btn:active { transform: scale(0.99); }
+  .analyze-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+  .loading-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 2rem; display: flex; align-items: center; gap: 16px; }
+  .spinner { width: 22px; height: 22px; flex-shrink: 0; border: 2.5px solid var(--border-md); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-size: 14px; color: var(--text2); }
+  .loading-text strong { display: block; color: var(--text); font-weight: 500; margin-bottom: 2px; }
+  .results-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 1.25rem; flex-wrap: wrap; gap: 10px; }
+  .tender-meta h2 { font-family: 'DM Serif Display', serif; font-size: 22px; letter-spacing: -0.02em; }
+  .tender-meta p { font-size: 13px; color: var(--text2); margin-top: 2px; }
+  .export-btn { font-size: 13px; padding: 8px 16px; border-radius: var(--radius); border: 1px solid var(--border-md); background: var(--surface); color: var(--text); cursor: pointer; font-family: 'DM Sans', sans-serif; transition: background 0.15s; white-space: nowrap; }
+  .export-btn:hover { background: var(--surface2); }
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 1.25rem; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.1rem; }
+  .stat-lbl { font-size: 12px; color: var(--text3); margin-bottom: 4px; font-weight: 500; }
+  .stat-val { font-size: 26px; font-weight: 300; }
+  .s-met { color: var(--accent); } .s-partial { color: var(--amber); } .s-not { color: var(--red); }
+  .verdict-box { border-radius: var(--radius); padding: 1rem 1.2rem; margin-bottom: 1.25rem; font-size: 14px; line-height: 1.65; border-left: 3px solid; }
+  .v-good { background: var(--accent-light); border-color: var(--accent); color: #0F3D25; }
+  .v-mid { background: var(--amber-light); border-color: var(--amber); color: #5C3C06; }
+  .v-bad { background: var(--red-light); border-color: var(--red); color: #5C1212; }
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+  .tab-btn { font-size: 13px; padding: 8px 16px; background: none; border: none; color: var(--text2); cursor: pointer; font-family: 'DM Sans', sans-serif; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 0.15s; }
+  .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+  .result-item { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.2rem; margin-bottom: 8px; transition: border 0.15s; }
+  .result-item:hover { border-color: var(--border-md); }
+  .result-top { display: flex; align-items: flex-start; gap: 10px; }
+  .badge { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; flex-shrink: 0; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .b-met { background: var(--accent-light); color: var(--accent); }
+  .b-partial { background: var(--amber-light); color: var(--amber); }
+  .b-not { background: var(--red-light); color: var(--red); }
+  .result-title { font-size: 14px; font-weight: 500; flex: 1; }
+  .result-detail { font-size: 13px; color: var(--text2); margin-top: 8px; line-height: 1.6; }
+  .result-evidence { font-size: 12px; color: var(--text3); margin-top: 8px; padding: 7px 12px; background: var(--surface2); border-radius: 6px; font-style: italic; line-height: 1.5; }
+  .empty-state { font-size: 14px; color: var(--text3); text-align: center; padding: 2rem; }
+  #hidden-file { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Tender<span>AI</span></div>
+  <div class="header-tag">Powered by Claude</div>
+</header>
+<main>
+  <h1 class="page-title">Tender checklist analyzer</h1>
+  <p class="page-sub">Upload a tender PDF and define your client's checklist. The AI will read every clause and tell you exactly what's met, what's partial, and what's missing.</p>
+  <div class="grid">
+    <div class="card">
+      <div class="card-label">Tender document (PDF)</div>
+      <div class="upload-zone" id="uploadZone">
+        <span class="upload-icon" id="uploadIcon">📄</span>
+        <div class="upload-text">Drop PDF here or <strong onclick="document.getElementById('hidden-file').click()">browse files</strong></div>
+        <div class="file-name" id="fileName" style="display:none;"></div>
+      </div>
+      <input type="file" id="hidden-file" accept=".pdf" />
+    </div>
+    <div class="card">
+      <div class="card-label">Client checklist</div>
+      <div class="presets">
+        <button class="chip" onclick="loadPreset('construction')">Construction</button>
+        <button class="chip" onclick="loadPreset('it')">IT services</button>
+        <button class="chip" onclick="loadPreset('consulting')">Consulting</button>
+        <button class="chip" onclick="loadPreset('supply')">Supply</button>
+      </div>
+      <div class="checklist-list" id="checklistList"></div>
+      <button class="add-link" onclick="addItem()">+ Add item</button>
+    </div>
+  </div>
+  <button class="analyze-btn" id="analyzeBtn" onclick="runAnalysis()">Analyze tender document →</button>
+  <div id="resultsArea"></div>
+</main>
+<script>
+const PRESETS = {
+  construction: ["Eligibility criteria and minimum turnover requirement","EMD / Earnest Money Deposit details","Experience of similar projects in last 5 years","Technical qualification requirements","Key personnel and manpower requirements","Completion period / project timeline","Performance bank guarantee details","Work scope and bill of quantities","Penalty clauses and liquidated damages"],
+  it: ["Minimum years of experience in IT services","Required certifications (ISO, CMMI etc.)","Past project experience with government/PSU","Annual turnover requirement","Data security and compliance requirements","SLA terms and uptime guarantees","Support and maintenance terms","IP ownership and licensing terms"],
+  consulting: ["Minimum team qualification requirements","Relevant sector experience","Annual financial turnover threshold","Key expert CVs and qualifications","Conflict of interest declaration","Methodology and work plan requirement","Report submission schedule","Payment terms and milestones"],
+  supply: ["Product specifications and standards","Delivery schedule and lead time","Warranty terms","Sample submission requirement","Country of origin / import restrictions","Packaging and labelling requirements","Quality certificates required","Price validity period"]
+};
+let selectedFile = null, items = [], lastResults = null;
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function initItems(arr){items=arr.map((t,i)=>({id:i+'-'+Date.now(),text:t}));renderList();}
+function renderList(){document.getElementById('checklistList').innerHTML=items.map(it=>`<div class="cl-item" id="cl-${it.id}"><input type="text" value="${esc(it.text)}" placeholder="e.g. EMD amount required" oninput="updateItem('${it.id}',this.value)" /><button class="del-btn" onclick="removeItem('${it.id}')">×</button></div>`).join('');}
+function addItem(){const id=Date.now()+'-'+Math.random();items.push({id,text:''});renderList();document.querySelector(`#cl-${id} input`)?.focus();}
+function removeItem(id){items=items.filter(i=>i.id!==id);renderList();}
+function updateItem(id,val){const it=items.find(i=>i.id===id);if(it)it.text=val;}
+function loadPreset(key){initItems(PRESETS[key]);}
+const uploadZone=document.getElementById('uploadZone');
+const fileInput=document.getElementById('hidden-file');
+uploadZone.addEventListener('dragover',e=>{e.preventDefault();uploadZone.style.borderColor='var(--accent)';});
+uploadZone.addEventListener('dragleave',()=>{uploadZone.style.borderColor='';});
+uploadZone.addEventListener('drop',e=>{e.preventDefault();handleFile(e.dataTransfer.files[0]);});
+fileInput.addEventListener('change',()=>{if(fileInput.files[0])handleFile(fileInput.files[0]);});
+function handleFile(f){if(!f||!f.name.toLowerCase().endsWith('.pdf')){alert('Please upload a PDF file.');return;}selectedFile=f;document.getElementById('fileName').textContent=f.name;document.getElementById('fileName').style.display='block';document.getElementById('uploadIcon').textContent='✅';uploadZone.classList.add('has-file');}
+const MESSAGES=["Reading tender document clauses…","Cross-referencing eligibility terms…","Evaluating each checklist point…","Compiling your analysis report…"];
+let msgTimer=null;
+async function runAnalysis(){
+  if(!selectedFile){alert('Please upload a tender PDF first.');return;}
+  const checklist=items.map(i=>i.text).filter(t=>t.trim());
+  if(!checklist.length){alert('Please add at least one checklist item.');return;}
+  const btn=document.getElementById('analyzeBtn');
+  btn.disabled=true;btn.textContent='Analyzing…';
+  let msgIdx=0;
+  const area=document.getElementById('resultsArea');
+  area.innerHTML=`<div class="loading-card"><div class="spinner"></div><div class="loading-text"><strong>Analyzing tender</strong><span id="loadMsg">${MESSAGES[0]}</span></div></div>`;
+  msgTimer=setInterval(()=>{msgIdx=(msgIdx+1)%MESSAGES.length;const el=document.getElementById('loadMsg');if(el)el.textContent=MESSAGES[msgIdx];},3000);
+  const formData=new FormData();
+  formData.append('pdf',selectedFile);
+  formData.append('checklist',JSON.stringify(checklist));
+  try{
+    const resp=await fetch('/analyze',{method:'POST',body:formData});
+    clearInterval(msgTimer);
+    if(!resp.ok){const err=await resp.json().catch(()=>({detail:'Unknown error'}));throw new Error(err.detail||'Server error');}
+    lastResults=await resp.json();
+    renderResults(lastResults);
+  }catch(e){
+    clearInterval(msgTimer);
+    area.innerHTML=`<div class="loading-card" style="border-color:#F5C4B3;"><div style="color:var(--red);font-size:14px;"><strong style="display:block;margin-bottom:4px;">Analysis failed</strong>${esc(e.message)}</div></div>`;
+  }
+  btn.disabled=false;btn.textContent='Re-analyze tender →';
+}
+function renderResults(data){
+  const results=data.results||[];
+  const met=results.filter(r=>r.status==='MET').length;
+  const partial=results.filter(r=>r.status==='PARTIAL').length;
+  const notMet=results.filter(r=>r.status==='NOT MET').length;
+  const score=Math.round(data.overall_score||0);
+  const vClass=score>=70?'v-good':score>=40?'v-mid':'v-bad';
+  document.getElementById('resultsArea').innerHTML=`
+    <div class="results-header"><div class="tender-meta"><h2>${esc(data.tender_title||'Tender Analysis')}</h2><p>${esc(data.issuing_authority||'')}${data.tender_reference?' · Ref: '+esc(data.tender_reference):''}</p></div><button class="export-btn" onclick="exportReport()">Download report ↓</button></div>
+    <div class="stats-row"><div class="stat"><div class="stat-lbl">Checklist met</div><div class="stat-val s-met">${met}<span style="font-size:16px;color:var(--text3);"> / ${results.length}</span></div></div><div class="stat"><div class="stat-lbl">Partial / unclear</div><div class="stat-val s-partial">${partial}</div></div><div class="stat"><div class="stat-lbl">Not met</div><div class="stat-val s-not">${notMet}</div></div></div>
+    <div class="verdict-box ${vClass}"><strong>Overall assessment (${score}/100):</strong> ${esc(data.overall_verdict||'')}</div>
+    <div class="tabs"><button class="tab-btn active" onclick="switchTab('all',this)">All (${results.length})</button><button class="tab-btn" onclick="switchTab('met',this)">Met (${met})</button><button class="tab-btn" onclick="switchTab('partial',this)">Partial (${partial})</button><button class="tab-btn" onclick="switchTab('notmet',this)">Not met (${notMet})</button></div>
+    <div id="tab-all">${results.map(r=>resultCard(r)).join('')||empty()}</div>
+    <div id="tab-met" style="display:none;">${results.filter(r=>r.status==='MET').map(r=>resultCard(r)).join('')||empty()}</div>
+    <div id="tab-partial" style="display:none;">${results.filter(r=>r.status==='PARTIAL').map(r=>resultCard(r)).join('')||empty()}</div>
+    <div id="tab-notmet" style="display:none;">${results.filter(r=>r.status==='NOT MET').map(r=>resultCard(r)).join('')||empty()}</div>`;
+}
+function empty(){return '<div class="empty-state">No items in this category.</div>';}
+function switchTab(tab,btn){document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');['all','met','partial','notmet'].forEach(id=>{document.getElementById('tab-'+id).style.display=id===tab?'block':'none';});}
+function resultCard(r){const bc=r.status==='MET'?'b-met':r.status==='PARTIAL'?'b-partial':'b-not';const lbl=r.status==='NOT MET'?'Not met':r.status==='PARTIAL'?'Partial':'Met';return `<div class="result-item"><div class="result-top"><span class="badge ${bc}">${lbl}</span><div class="result-title">${esc(r.item)}</div></div><div class="result-detail">${esc(r.detail)}</div>${r.evidence?`<div class="result-evidence">${esc(r.evidence)}</div>`:''}</div>`;}
+function exportReport(){if(!lastResults)return;const d=lastResults;let txt=`TENDER ANALYSIS REPORT\n${'='.repeat(55)}\n\nTender      : ${d.tender_title||'N/A'}\nReference   : ${d.tender_reference||'N/A'}\nAuthority   : ${d.issuing_authority||'N/A'}\n\nOVERALL VERDICT (Score: ${d.overall_score}/100)\n${'-'.repeat(40)}\n${d.overall_verdict}\n\nCHECKLIST RESULTS\n${'-'.repeat(40)}\n\n`;(d.results||[]).forEach((r,i)=>{txt+=`${i+1}. [${r.status}] ${r.item}\n   ${r.detail}\n${r.evidence?'   Evidence: "'+r.evidence+'"\n':''}\n`;});const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'}));a.download='tender-analysis-report.txt';a.click();}
+initItems(PRESETS.construction);
+</script>
+</body>
+</html>"""
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return FileResponse("static/index.html")
+    return HTMLResponse(content=HTML_PAGE)
 
 
 @app.post("/analyze")
